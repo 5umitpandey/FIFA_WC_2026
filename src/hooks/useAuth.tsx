@@ -92,45 +92,38 @@ function AuthProvider({ children }: { children: ReactNode }) {
     const normalizedFullName = fullName.trim();
 
     try {
-      const { data, error } = await supabase.auth.signUp({
-        password,
-        email: `${normalizedUsername}@wc2026.local`,
-        options: {
-          data: {
-            full_name: normalizedFullName,
-            username: normalizedUsername,
-          },
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/auth-signup`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+          'apikey': supabaseAnonKey,
         },
+        body: JSON.stringify({
+          fullName: normalizedFullName,
+          username: normalizedUsername,
+          password,
+          supportingCountry,
+        }),
       });
 
-      if (error) {
-        return { error: error.message };
+      const result = await response.json();
+
+      if (!response.ok) {
+        return { error: result.error || 'Sign up failed' };
       }
 
-      const sessionResponse = await supabase.auth.getSession();
-      if (!sessionResponse.data.session) {
-        const { error: signInError } = await supabase.auth.signInWithPassword({
-          email: `${normalizedUsername}@wc2026.local`,
-          password,
-        });
+      // Account created via edge function — now sign in to establish a session
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email: `${normalizedUsername}@wc2026.local`,
+        password,
+      });
 
-        if (signInError) {
-          return { error: signInError.message };
-        }
-      }
-
-      const userId = data.user?.id ?? sessionResponse.data.session?.user?.id;
-      if (userId) {
-        const { error: profileError } = await supabase.from('users').insert({
-          id: userId,
-          full_name: normalizedFullName,
-          username: normalizedUsername,
-          supporting_country: supportingCountry,
-        });
-
-        if (profileError) {
-          return { error: profileError.message };
-        }
+      if (signInError) {
+        return { error: 'Account created but sign in failed. Please try signing in.' };
       }
 
       return {};
