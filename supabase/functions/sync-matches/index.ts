@@ -18,6 +18,30 @@ interface MatchUpdates {
   kickoff_time?: string;
 }
 
+// Bracket progression map: match_code → which slot in the next round gets filled
+const BRACKET_PROGRESSION: Record<string, { next_match: string; slot: "team1_id" | "team2_id" }> = {
+  "R16-1": { next_match: "QF-1", slot: "team1_id" },
+  "R16-2": { next_match: "QF-1", slot: "team2_id" },
+  "R16-3": { next_match: "QF-2", slot: "team2_id" },
+  "R16-4": { next_match: "QF-2", slot: "team1_id" },
+  "R16-5": { next_match: "QF-3", slot: "team1_id" },
+  "R16-6": { next_match: "QF-3", slot: "team2_id" },
+  "R16-7": { next_match: "QF-4", slot: "team1_id" },
+  "R16-8": { next_match: "QF-4", slot: "team2_id" },
+  "QF-1":  { next_match: "SF-1", slot: "team1_id" },
+  "QF-2":  { next_match: "SF-1", slot: "team2_id" },
+  "QF-3":  { next_match: "SF-2", slot: "team1_id" },
+  "QF-4":  { next_match: "SF-2", slot: "team2_id" },
+  "SF-1":  { next_match: "FIN",  slot: "team1_id" },
+  "SF-2":  { next_match: "FIN",  slot: "team2_id" },
+};
+
+// Semi-final losers go to third-place match
+const SF_LOSER_SLOT: Record<string, "team1_id" | "team2_id"> = {
+  "SF-1": "team1_id",
+  "SF-2": "team2_id",
+};
+
 Deno.serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { status: 200, headers: corsHeaders });
@@ -47,8 +71,8 @@ Deno.serve(async (req: Request) => {
           updated_at: new Date().toISOString(),
         };
 
-        if (update.team1_id) updateData.team1_id = update.team1_id;
-        if (update.team2_id) updateData.team2_id = update.team2_id;
+        if (update.team1_id !== undefined) updateData.team1_id = update.team1_id;
+        if (update.team2_id !== undefined) updateData.team2_id = update.team2_id;
         if (update.status) updateData.status = update.status;
         if (update.winner_id) updateData.winner_id = update.winner_id;
         if (update.home_score !== undefined) updateData.home_score = update.home_score;
@@ -67,6 +91,7 @@ Deno.serve(async (req: Request) => {
 
         if (update.status === "completed" && update.winner_id) {
           await calculateScores(supabase, update.match_code);
+          await advanceToNextRound(supabase, update.match_code, update.winner_id);
         }
 
         results.push({ match_code: update.match_code, status: "updated" });
@@ -107,6 +132,41 @@ Deno.serve(async (req: Request) => {
   }
 });
 
+async function advanceToNextRound(supabase: any, matchCode: string, winnerId: string) {
+  const progression = BRACKET_PROGRESSION[matchCode];
+  if (!progression) return;
+
+  // Advance winner to the next match
+  const { error } = await supabase
+    .from("matches")
+    .update({ [progression.slot]: winnerId })
+    .eq("match_code", progression.next_match);
+
+  if (error) {
+    console.error(`Error advancing winner from ${matchCode} to ${progression.next_match}:`, error);
+  }
+
+  // For semi-finals, also place the loser in the third-place match
+  const loserSlot = SF_LOSER_SLOT[matchCode];
+  if (loserSlot) {
+    const { data: sfMatch } = await supabase
+      .from("matches")
+      .select("team1_id, team2_id")
+      .eq("match_code", matchCode)
+      .single();
+
+    if (sfMatch) {
+      const loserId = sfMatch.team1_id === winnerId ? sfMatch.team2_id : sfMatch.team1_id;
+      if (loserId) {
+        await supabase
+          .from("matches")
+          .update({ [loserSlot]: loserId })
+          .eq("match_code", "TP");
+      }
+    }
+  }
+}
+
 async function calculateScores(supabase: any, matchCode: string) {
   const { data: match } = await supabase
     .from("matches")
@@ -133,9 +193,6 @@ async function calculateScores(supabase: any, matchCode: string) {
 
   const pointsPerMatch = pointsMap[match.round] || 3;
 
-  // Count every saved prediction once the real match result is known.
-  // A user does not need to have pressed "Lock in Predictions" if the match
-  // prediction window has already closed.
   for (const pred of predictions) {
     const points = pred.predicted_winner_id === match.winner_id ? pointsPerMatch : 0;
 
@@ -209,16 +266,9 @@ async function calculateTournamentScores(supabase: any) {
       .maybeSingle();
 
     if (existingChamp) {
-      await supabase
-        .from("scores")
-        .update({ points_earned: championScore })
-        .eq("id", existingChamp.id);
+      await supabase.from("scores").update({ points_earned: championScore }).eq("id", existingChamp.id);
     } else {
-      await supabase.from("scores").insert({
-        user_id: user.id,
-        points_earned: championScore,
-        score_type: "champion",
-      });
+      await supabase.from("scores").insert({ user_id: user.id, points_earned: championScore, score_type: "champion" });
     }
 
     const { data: existingRunnerUp } = await supabase
@@ -229,16 +279,9 @@ async function calculateTournamentScores(supabase: any) {
       .maybeSingle();
 
     if (existingRunnerUp) {
-      await supabase
-        .from("scores")
-        .update({ points_earned: runnerUpScore })
-        .eq("id", existingRunnerUp.id);
+      await supabase.from("scores").update({ points_earned: runnerUpScore }).eq("id", existingRunnerUp.id);
     } else {
-      await supabase.from("scores").insert({
-        user_id: user.id,
-        points_earned: runnerUpScore,
-        score_type: "runner_up",
-      });
+      await supabase.from("scores").insert({ user_id: user.id, points_earned: runnerUpScore, score_type: "runner_up" });
     }
 
     if (thirdPlaceMatch && thirdPlaceMatch.winner_id) {
@@ -252,16 +295,9 @@ async function calculateTournamentScores(supabase: any) {
         .maybeSingle();
 
       if (existingThird) {
-        await supabase
-          .from("scores")
-          .update({ points_earned: thirdPlaceScore })
-          .eq("id", existingThird.id);
+        await supabase.from("scores").update({ points_earned: thirdPlaceScore }).eq("id", existingThird.id);
       } else {
-        await supabase.from("scores").insert({
-          user_id: user.id,
-          points_earned: thirdPlaceScore,
-          score_type: "third_place",
-        });
+        await supabase.from("scores").insert({ user_id: user.id, points_earned: thirdPlaceScore, score_type: "third_place" });
       }
     }
   }

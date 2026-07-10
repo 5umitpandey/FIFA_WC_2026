@@ -62,7 +62,7 @@ export function Leaderboard() {
       const totals = new Map<string, number>();
       scores?.forEach((s) => totals.set(s.user_id, (totals.get(s.user_id) ?? 0) + s.points_earned));
 
-      const leaderboard = users
+      const sorted = users
         .map((u) => ({
           user_id: u.id,
           full_name: u.full_name,
@@ -71,8 +71,15 @@ export function Leaderboard() {
           total_points: totals.get(u.id) ?? 0,
           rank: 0,
         }))
-        .sort((a, b) => b.total_points - a.total_points)
-        .map((e, idx) => ({ ...e, rank: idx + 1 }));
+        .sort((a, b) => b.total_points - a.total_points);
+
+      let currentRank = 1;
+      const leaderboard = sorted.map((e, idx) => {
+        if (idx > 0 && e.total_points < sorted[idx - 1].total_points) {
+          currentRank = idx + 1;
+        }
+        return { ...e, rank: currentRank };
+      });
 
       setEntries(leaderboard);
       setLoading(false);
@@ -229,7 +236,9 @@ export function Leaderboard() {
                         />
                       )}
                       <div>
-                        <p className="text-white font-medium">{entry.full_name}</p>
+                        <p className="text-white font-medium">
+                          {/^test/i.test(entry.username) ? '🤖' : '🧑'} {entry.full_name}
+                        </p>
                         <p className="text-gray-500 text-sm">@{entry.username}</p>
                       </div>
                     </div>
