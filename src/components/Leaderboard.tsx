@@ -62,7 +62,13 @@ export function Leaderboard() {
       const totals = new Map<string, number>();
       scores?.forEach((s) => totals.set(s.user_id, (totals.get(s.user_id) ?? 0) + s.points_earned));
 
+      const isTestUser = (u: { full_name: string; username: string }) => {
+        const name = `${u.full_name} ${u.username}`.toLowerCase();
+        return name.includes('test') && u.username.toLowerCase() !== 'testd';
+      };
+
       const sorted = users
+        .filter((u) => !isTestUser(u))
         .map((u) => ({
           user_id: u.id,
           full_name: u.full_name,
