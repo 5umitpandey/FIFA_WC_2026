@@ -443,7 +443,3 @@ The Supabase Edge Function is deployed separately through Supabase.
 - Live result polling
 - Email or push reminders before lock windows
 - Audit log for changed match results
-
-## License
-
-This project is currently private and does not declare an open-source license. Add a license file before publishing publicly if you want others to reuse or modify it.
